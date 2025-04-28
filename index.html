@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predicción de Dibujos - Fashion MNIST</title>
+    <style>
+        canvas {
+            border: 2px solid black;
+            margin: 20px auto;
+            display: block;
+        }
+        .contenedor {
+            text-align: center;
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        #resultado {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="contenedor">
+        <h1>Predicción de Dibujos</h1>
+        <canvas id="lienzo" width="280" height="280"></canvas>
+        <canvas id="otrolienzo" width="28" height="28" style="display: none"></canvas>
+        <button onclick="predecir()">Predecir</button>
+        <button onclick="limpiarLienzo()">Borrar</button>
+        <div id="resultado"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script>
+        const lienzo = document.getElementById('lienzo');
+        const ctx = lienzo.getContext('2d');
+        const otrolienzo = document.getElementById('otrolienzo');
+        const resultado = document.getElementById('resultado');
+        let modelo = null;
+        let dibujando = false;
+
+        // Nombres de las clases según el dataset Fashion MNIST
+        const nombresClases = [
+            'Camiseta/Top', 'Pantalón', 'Suéter', 'Vestido', 'Abrigo',
+            'Sandalia', 'Camisa', 'Zapatilla', 'Bolso', 'Bota'
+        ];
+
+        // Cargar el modelo de forma similar al código de "Perros y Gatos"
+        (async () => {
+            console.log("Cargando modelo...");
+            modelo = await tf.loadLayersModel('tfjs_target_dir/model.json');
+            console.log("Modelo cargado");
+        })();
+
+        // Configurar el lienzo para dibujar
+        ctx.lineWidth = 15;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'black';
+
+        lienzo.addEventListener('mousedown', () => dibujando = true);
+        lienzo.addEventListener('mouseup', () => dibujando = false);
+        lienzo.addEventListener('mousemove', dibujar);
+        lienzo.addEventListener('mouseleave', () => dibujando = false);
+
+        function dibujar(e) {
+            if (!dibujando) return;
+            ctx.beginPath();
+            const rect = lienzo.getBoundingClientRect();
+            ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+            ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+            ctx.stroke();
+        }
+
+        function limpiarLienzo() {
+            ctx.clearRect(0, 0, lienzo.width, lienzo.height);
+            resultado.innerText = '';
+        }
+
+        // Función de redimensionamiento (adaptada del código de "Perros y Gatos")
+        function resample_single(canvas, width, height, resize_canvas) {
+            var width_source = canvas.width;
+            var height_source = canvas.height;
+            width = Math.round(width);
+            height = Math.round(height);
+
+            var ratio_w = width_source / width;
+            var ratio_h = height_source / height;
+            var ratio_w_half = Math.ceil(ratio_w / 2);
+            var ratio_h_half = Math.ceil(ratio_h / 2);
+
+            var ctx = canvas.getContext("2d");
+            var ctx2 = resize_canvas.getContext("2d");
+            var img = ctx.getImageData(0, 0, width_source, height_source);
+            var img2 = ctx2.createImageData(width, height);
+            var data = img.data;
+            var data2 = img2.data;
+
+            for (var j = 0; j < height; j++) {
+                for (var i = 0; i < width; i++) {
+                    var x2 = (i + j * width) * 4;
+                    var weight = 0;
+                    var weights = 0;
+                    var weights_alpha = 0;
+                    var gx_r = 0;
+                    var gx_g = 0;
+                    var gx_b = 0;
+                    var gx_a = 0;
+                    var center_y = (j + 0.5) * ratio_h;
+                    var yy_start = Math.floor(j * ratio_h);
+                    var yy_stop = Math.ceil((j + 1) * ratio_h);
+                    for (var yy = yy_start; yy < yy_stop; yy++) {
+                        var dy = Math.abs(center_y - (yy + 0.5)) / ratio_h_half;
+                        var center_x = (i + 0.5) * ratio_w;
+                        var w0 = dy * dy;
+                        var xx_start = Math.floor(i * ratio_w);
+                        var xx_stop = Math.ceil((i + 1) * ratio_w);
+                        for (var xx = xx_start; xx < xx_stop; xx++) {
+                            var dx = Math.abs(center_x - (xx + 0.5)) / ratio_w_half;
+                            var w = Math.sqrt(w0 + dx * dx);
+                            if (w >= 1) {
+                                continue;
+                            }
+                            weight = 2 * w * w * w - 3 * w * w + 1;
+                            var pos_x = 4 * (xx + yy * width_source);
+                            gx_a += weight * data[pos_x + 3];
+                            weights_alpha += weight;
+                            if (data[pos_x + 3] < 255)
+                                weight = weight * data[pos_x + 3] / 250;
+                            gx_r += weight * data[pos_x];
+                            gx_g += weight * data[pos_x + 1];
+                            gx_b += weight * data[pos_x + 2];
+                            weights += weight;
+                        }
+                    }
+                    data2[x2] = gx_r / weights;
+                    data2[x2 + 1] = gx_g / weights;
+                    data2[x2 + 2] = gx_b / weights;
+                    data2[x2 + 3] = gx_a / weights_alpha;
+                }
+            }
+            ctx2.putImageData(img2, 0, 0);
+        }
+
+        // Preprocesar la imagen y predecir
+        async function predecir() {
+            if (modelo == null) {
+                resultado.innerText = 'El modelo aún no está cargado. Por favor espera...';
+                return;
+            }
+
+            // Redimensionar la imagen de 280x280 a 28x28 usando resample_single
+            resample_single(lienzo, 28, 28, otrolienzo);
+
+            // Obtener los datos de la imagen redimensionada
+            var ctx2 = otrolienzo.getContext("2d");
+            var imgData = ctx2.getImageData(0, 0, 28, 28);
+
+            var arr = [];
+            var arr28 = [];
+
+            // Convertir a escala de grises y normalizar
+            for (var p = 0; p < imgData.data.length; p += 4) {
+                var rojo = imgData.data[p] / 255;
+                var verde = imgData.data[p + 1] / 255;
+                var azul = imgData.data[p + 2] / 255;
+
+                var gris = (rojo + verde + azul) / 3; // Promedio para escala de grises
+                arr28.push([gris]);
+                if (arr28.length == 28) {
+                    arr.push(arr28);
+                    arr28 = [];
+                }
+            }
+
+            arr = [arr];
+
+            // Preparar el tensor para el modelo (1, 28, 28, 1)
+            var tensor = tf.tensor4d(arr);
+
+            // Hacer la predicción
+            var prediccion = modelo.predict(tensor).dataSync();
+            var clasePredicha = prediccion.indexOf(Math.max(...prediccion));
+
+            // Mostrar el resultado
+            resultado.innerText = `Predicción: ${nombresClases[clasePredicha]} (${(Math.max(...prediccion) * 100).toFixed(2)}%)`;
+        }
+    </script>
+</body>
+</html>
